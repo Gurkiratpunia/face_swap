@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Live Face Swap — Fixed Model Fetch</title>
+  <title>Live Face Swap — Fixed Masked Sources</title>
   <style>
     :root{--bg:#0f1724;--card:#0b1220;--accent:#66e4b4;--muted:#9aa6b2}
     html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#071827 0%, #061021 100%);color:#e6eef6}
@@ -21,47 +21,41 @@
     .stat{font-size:13px;color:var(--muted);margin-top:6px}
     .credits{font-size:12px;color:#9fb6c6}
     .muted-pill{background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:8px;color:var(--muted)}
-    .error{color:#ffb4b4;background:rgba(255,0,0,0.04);padding:8px;border-radius:8px;margin-top:8px}
-    .ok{color:#baffd6;background:rgba(0,255,150,0.04);padding:8px;border-radius:8px;margin-top:8px}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="panel">
-      <h1>Live Face Swap — Fixed Model Fetch</h1>
+      <h1>Live Face Swap — Fixed Masked Sources</h1>
       <canvas id="videoCanvas" width="960" height="540"></canvas>
       <div class="stat" id="status">Initializing... allow camera when prompted.</div>
-
       <div style="display:flex;gap:8px;margin-top:10px">
         <button id="swapBtn">Start swapping</button>
         <button id="pauseBtn" class="ghost">Pause</button>
         <button id="snapBtn" class="ghost">Snapshot</button>
-        <button id="retryModels" class="ghost">Retry models</button>
       </div>
-
       <div style="margin-top:10px;display:flex;gap:8px">
         <div class="muted-pill" id="fps">FPS: --</div>
         <div class="muted-pill" id="facesCount">Faces: --</div>
         <div class="muted-pill" id="blendVal">Blend: 0.8</div>
       </div>
-
-      <div id="modelInfo" style="margin-top:10px"></div>
     </div>
 
     <aside class="panel">
       <div class="controls">
         <div>
-          <label><strong>Model source (tried automatically)</strong></label>
-          <small>Page attempts multiple public URLs. Check the status box below.</small>
+          <label><strong>Model</strong></label>
+          <div class="row"><button class="ghost" id="modelSelect">face-api.js (Tiny Face Detector)</button></div>
+          <small>Models load automatically from CDN. First load may take a few seconds.</small>
         </div>
 
         <div>
           <label>Blend strength</label>
-          <input id="blend" type="range" min="0" max="1" step="0.01" value="0.8">
+          <input id="blend" type="range" min="0" max="1" step="0.01" value="0.85">
         </div>
 
         <div>
-          <label>Smoothing</label>
+          <label>Smoothing (landmark smoothing)</label>
           <input id="smooth" type="range" min="0" max="1" step="0.01" value="0.7">
         </div>
 
@@ -80,25 +74,25 @@
         <div>
           <label>Extras</label>
           <div class="row"><input type="checkbox" id="showLandmarks"> <label for="showLandmarks">Show landmarks</label></div>
-          <div class="row"><input type="checkbox" id="mirror"> <label for="mirror">Mirror preview</label></div>
+          <div class="row"><input type="checkbox" id="mirror"> <label for="mirror">Mirror preview (selfie)</label></div>
         </div>
 
         <div style="margin-top:auto">
-          <div class="credits">face-api.js + Delaunator. No uploads — runs locally in browser.</div>
+          <div class="credits">Built with face-api.js + Delaunator. Runs fully in your browser; no uploads.</div>
         </div>
       </div>
     </aside>
   </div>
 
-  <!-- Libraries -->
+  <!-- Libraries from CDN -->
   <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
   <script src="https://unpkg.com/delaunator@5.0.0/index.min.js"></script>
 
   <script>
   (function(){
     // DOM
-    const videoCanvas = document.getElementById('videoCanvas');
-    const ctx = videoCanvas.getContext('2d');
+    const canvas = document.getElementById('videoCanvas');
+    const ctx = canvas.getContext('2d');
     const status = document.getElementById('status');
     const fpsEl = document.getElementById('fps');
     const facesCount = document.getElementById('facesCount');
@@ -111,116 +105,71 @@
     const resSelect = document.getElementById('res');
     const showLandmarks = document.getElementById('showLandmarks');
     const mirror = document.getElementById('mirror');
-    const retryModels = document.getElementById('retryModels');
-    const modelInfo = document.getElementById('modelInfo');
 
     // video element
-    const videoEl = document.createElement('video');
-    videoEl.autoplay = true; videoEl.muted = true; videoEl.playsInline = true;
+    const video = document.createElement('video');
+    video.autoplay = true; video.muted = true; video.playsInline = true;
 
-    // offscreen canvases reused
-    let offVideoCanvas = document.createElement('canvas'), offVideoCtx = offVideoCanvas.getContext('2d');
-    let srcA = document.createElement('canvas'), sA = srcA.getContext('2d');
-    let srcB = document.createElement('canvas'), sB = srcB.getContext('2d');
-    let maskA = document.createElement('canvas'), mA = maskA.getContext('2d');
-    let maskB = document.createElement('canvas'), mB = maskB.getContext('2d');
-    let composite = document.createElement('canvas'), comp = composite.getContext('2d');
+    // offscreen canvases (reused)
+    const offVideo = document.createElement('canvas'); const offVideoCtx = offVideo.getContext('2d');
+    const srcA = document.createElement('canvas'); const sA = srcA.getContext('2d');
+    const srcB = document.createElement('canvas'); const sB = srcB.getContext('2d');
+    const maskA = document.createElement('canvas'); const mA = maskA.getContext('2d');
+    const maskB = document.createElement('canvas'); const mB = maskB.getContext('2d');
+    const composite = document.createElement('canvas'); const comp = composite.getContext('2d');
 
-    // state
     let swapping=false, paused=false;
-    let lastTime=performance.now(), frames=0, curFps=0;
-    const history = [], maxHistory = 4;
+    let lastTime = performance.now(), frames=0, curFps=0;
+    const history = [], maxHistory=4;
 
-    function setCanvasSizeFromRes(){
+    function setSize(){
       const [w,h] = resSelect.value.split('x').map(Number);
-      videoCanvas.width = w; videoCanvas.height = h;
-      offVideoCanvas.width = w; offVideoCanvas.height = h;
+      canvas.width = w; canvas.height = h;
+      offVideo.width = w; offVideo.height = h;
       srcA.width = srcB.width = maskA.width = maskB.width = composite.width = w;
       srcA.height = srcB.height = maskA.height = maskB.height = composite.height = h;
     }
 
-    // model URLs to try (in order) — multiple public hosts
-    const modelCandidateBases = [
-      // jsDelivr GitHub package (fast)
-      'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights',
-      // raw GitHub (works in many setups)
-      'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights',
-      // fallback: local /weights (if you host the weights locally)
-      '/weights'
-    ];
-
-    let successfulModelBase = null;
-
-    // Attempt to load models from multiple bases until one succeeds
-    async function loadModelsWithRetries(){
-      modelInfo.innerHTML = '';
-      status.innerText = 'Loading face-api models (trying multiple CDNs)...';
-      for(const base of modelCandidateBases){
-        modelInfo.innerHTML += `<div>Trying <code>${base}</code> ...</div>`;
-        try{
-          // Test by attempting to fetch a small model file first (tiny landmark net json)
-          const testUrl = base.replace(/\/$/,'') + '/face_landmark_68_tiny_model-weights_manifest.json';
-          // attempt fetch with timeout
-          await fetchWithTimeout(testUrl, 7000);
-          // if fetch OK, try loading nets from this base
-          await faceapi.nets.tinyFaceDetector.loadFromUri(base);
-          await faceapi.nets.faceLandmark68TinyNet.loadFromUri(base);
-          successfulModelBase = base;
-          modelInfo.innerHTML += `<div class="ok">Loaded models from <strong>${base}</strong></div>`;
-          status.innerText = 'Models loaded from: ' + base;
-          console.log('Models loaded from', base);
-          return;
-        }catch(err){
-          modelInfo.innerHTML += `<div class="error">Failed: ${err && err.message ? escapeHtml(err.message) : String(err)}</div>`;
-          console.warn('Model base failed:', base, err);
-        }
-      }
-      // none succeeded
-      successfulModelBase = null;
-      status.innerText = 'Model fetch failed from all tried locations. See details below.';
-      modelInfo.innerHTML += `<div class="error">All model fetch attempts failed. Check console for errors. Try running the page from http://localhost or host model weights locally at /weights.</div>`;
-      throw new Error('Model fetch failed from all candidate URLs.');
-    }
-
-    // small helper: fetch with timeout
-    function fetchWithTimeout(url, ms){
-      return new Promise((resolve, reject)=>{
-        const t = setTimeout(()=>{ reject(new Error('Timeout fetching ' + url)); }, ms);
-        fetch(url, {method:'GET'}).then(r=>{
-          clearTimeout(t);
-          if(!r.ok) return reject(new Error('HTTP ' + r.status + ' at ' + url));
-          resolve(r);
-        }).catch(err=>{ clearTimeout(t); reject(err); });
-      });
-    }
-
-    // text-escape for safety in DOM
-    function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
-    // camera start (robust)
-    async function startCamera(){
-      status.innerText = 'Requesting camera permission...';
+    // load models (simple single-base approach; assume CDN ok)
+    async function loadModels(){
+      status.innerText = 'Loading models...';
+      const base = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
       try{
-        const constraints = { video: { facingMode: 'user', width: { ideal: videoCanvas.width }, height: { ideal: videoCanvas.height } }, audio: false };
-        let stream;
-        try { stream = await navigator.mediaDevices.getUserMedia(constraints); }
-        catch(e){ stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); }
-        videoEl.srcObject = stream;
-        await videoEl.play();
-        status.innerText = 'Camera ready.';
+        await faceapi.nets.tinyFaceDetector.loadFromUri(base);
+        await faceapi.nets.faceLandmark68TinyNet.loadFromUri(base);
+        status.innerText = 'Models loaded.';
       }catch(e){
-        console.error('Camera start failed', e);
-        status.innerText = 'Camera error: ' + (e && e.message ? e.message : e);
+        console.error(e);
+        status.innerText = 'Model load failed: ' + (e.message || e);
         throw e;
       }
     }
 
-    // landmarks helpers
-    function getLandmarkPoints(det){ return det.landmarks.positions.map(p=>[p.x, p.y]); }
-    function smoothPoints(prev, current, alpha){ if(!prev) return current.map(p=>[p[0],p[1]]); return current.map((p,i)=>[prev[i][0]*(1-alpha)+p[0]*alpha, prev[i][1]*(1-alpha)+p[1]*alpha]); }
-    function getAvgPoints(a,b){ return a.map((p,i)=>[(p[0]+b[i][0])/2, (p[1]+b[i][1])/2]); }
+    async function startCam(){
+      status.innerText = 'Requesting camera...';
+      try{
+        let stream;
+        try{
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: canvas.width }, height: { ideal: canvas.height } }, audio: false });
+        }catch(e){
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+        video.srcObject = stream;
+        await video.play();
+        status.innerText = 'Camera ready.';
+      }catch(e){
+        console.error(e);
+        status.innerText = 'Camera error: ' + (e.message || e);
+        throw e;
+      }
+    }
 
-    // affine / warp helpers (same as before)
+    function getLandmarks(det){
+      return det.landmarks.positions.map(p=>[p.x, p.y]);
+    }
+    function smoothPoints(prev, cur, alpha){ if(!prev) return cur.map(p=>[p[0],p[1]]); return cur.map((p,i)=>[prev[i][0]*(1-alpha)+p[0]*alpha, prev[i][1]*(1-alpha)+p[1]*alpha]); }
+    function avgPoints(a,b){ return a.map((p,i)=>[(p[0]+b[i][0])/2, (p[1]+b[i][1])/2]); }
+
     function computeAffine(srcTri, dstTri){
       const A=[]; const Bu=[]; const Bv=[];
       for(let i=0;i<3;i++){ const [x,y]=srcTri[i]; const [u,v]=dstTri[i]; A.push([x,y,1]); Bu.push(u); Bv.push(v); }
@@ -230,13 +179,14 @@
         const a21=m[1][0], a22=m[1][1], a23=m[1][2];
         const a31=m[2][0], a32=m[2][1], a33=m[2][2];
         const det = a11*(a22*a33-a23*a32) - a12*(a21*a33-a23*a31) + a13*(a21*a32-a22*a31);
-        if(Math.abs(det) < 1e-8) return [0,0,0];
+        if(Math.abs(det)<1e-8) return [0,0,0];
         const det1 = B[0]*(a22*a33-a23*a32) - a12*(B[1]*a33-a23*B[2]) + a13*(B[1]*a32-a22*B[2]);
         const det2 = a11*(B[1]*a33-a23*B[2]) - B[0]*(a21*a33-a23*a31) + a13*(a21*B[2]-B[1]*a31);
         const det3 = a11*(a22*B[2]-B[1]*a32) - a12*(a21*B[2]-B[1]*a31) + B[0]*(a21*a32-a22*a31);
         return [det1/det, det2/det, det3/det];
       }
-      const [a,c,e] = solve3(A,Bu); const [b,d,f] = solve3(A,Bv);
+      const [a,c,e] = solve3(A,Bu);
+      const [b,d,f] = solve3(A,Bv);
       return [a,b,c,d,e,f];
     }
 
@@ -248,6 +198,7 @@
       dstCtx.lineTo(dstTri[2][0], dstTri[2][1]);
       dstCtx.closePath();
       dstCtx.clip();
+
       const M = computeAffine(srcTri, dstTri);
       dstCtx.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]);
       dstCtx.globalAlpha = blend;
@@ -257,126 +208,163 @@
       dstCtx.setTransform(1,0,0,1,0,0);
     }
 
-    function drawMask(ctx, pts){
+    function drawFaceMask(ctx, pts){
       ctx.beginPath();
-      const hullOrder = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,26,25,24,23,22,21,20,19,18,17];
-      ctx.moveTo(pts[hullOrder[0]][0], pts[hullOrder[0]][1]);
-      for(let i=1;i<hullOrder.length;i++) ctx.lineTo(pts[hullOrder[i]][0], pts[hullOrder[i]][1]);
-      ctx.closePath(); ctx.fill();
+      const hull = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,26,25,24,23,22,21,20,19,18,17];
+      ctx.moveTo(pts[hull[0]][0], pts[hull[0]][1]);
+      for(let i=1;i<hull.length;i++) ctx.lineTo(pts[hull[i]][0], pts[hull[i]][1]);
+      ctx.closePath();
+      ctx.fill();
     }
 
-    function getTrianglesFromLandmarks(landmarks){
-      const coordsFlat = [];
-      for(const p of landmarks){ coordsFlat.push(p[0]); coordsFlat.push(p[1]); }
-      const dela = new Delaunator(coordsFlat);
-      const triangles = [];
-      for(let i=0;i<dela.triangles.length;i+=3){
-        const ia = dela.triangles[i], ib = dela.triangles[i+1], ic = dela.triangles[i+2];
-        triangles.push([landmarks[ia], landmarks[ib], landmarks[ic]]);
+    function getTriangles(landmarks){
+      // Use Delaunator on the landmarks average
+      const coords = [];
+      for(const p of landmarks){ coords.push(p[0]); coords.push(p[1]); }
+      const d = new Delaunator(coords);
+      const tris = [];
+      for(let i=0;i<d.triangles.length;i+=3){
+        const ia = d.triangles[i], ib = d.triangles[i+1], ic = d.triangles[i+2];
+        tris.push([landmarks[ia], landmarks[ib], landmarks[ic]]);
       }
-      return triangles;
+      return tris;
     }
 
-    async function processFrame(){
-      if(paused){ requestAnimationFrame(processFrame); return; }
-      if(videoEl.readyState < 2){ requestAnimationFrame(processFrame); return; }
+    async function process(){
+      if(paused) { requestAnimationFrame(process); return; }
+      if(video.readyState < 2){ requestAnimationFrame(process); return; }
 
-      const w = videoCanvas.width, h = videoCanvas.height;
+      const w = canvas.width, h = canvas.height;
+
+      // draw current frame to offVideo
       offVideoCtx.save();
       if(mirror.checked){ offVideoCtx.translate(w,0); offVideoCtx.scale(-1,1); }
-      offVideoCtx.drawImage(videoEl, 0, 0, w, h);
+      offVideoCtx.drawImage(video, 0, 0, w, h);
       offVideoCtx.restore();
 
-      // detection on video element (fast)
-      const detections = await faceapi.detectAllFaces(videoEl, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })).withFaceLandmarks(true);
+      // detect
+      const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })).withFaceLandmarks(true);
 
-      frames++; const now = performance.now(); if(now - lastTime >= 1000){ curFps = frames; frames=0; lastTime=now; fpsEl.innerText = 'FPS: '+curFps; }
+      frames++; const now = performance.now(); if(now - lastTime >= 1000){ curFps = frames; frames=0; lastTime = now; fpsEl.innerText = 'FPS: '+curFps; }
       facesCount.innerText = 'Faces: ' + detections.length;
 
+      // baseline: draw frame
       ctx.clearRect(0,0,w,h);
-      ctx.drawImage(offVideoCanvas, 0,0);
+      ctx.drawImage(offVideo, 0, 0);
 
       if(detections.length < 2){
         status.innerText = 'Need two faces visible to swap. Faces found: ' + detections.length;
-        requestAnimationFrame(processFrame);
+        requestAnimationFrame(process);
         return;
       }
 
-      status.innerText = 'Swapping faces — hold still for best results.';
+      status.innerText = 'Swapping faces — hold steady.';
 
-      detections.sort((a,b)=>{ const aA=a.detection.box.width*a.detection.box.height; const bA=b.detection.box.width*b.detection.box.height; return bA - aA; });
-      const detA = detections[0], detB = detections[1];
-      let lmA = getLandmarkPoints(detA), lmB = getLandmarkPoints(detB);
+      // pick two largest faces
+      detections.sort((a,b)=>{ const aa=a.detection.box.width*a.detection.box.height; const bb=b.detection.box.width*b.detection.box.height; return bb - aa; });
+      const A = detections[0], B = detections[1];
+      let lmA = getLandmarks(A), lmB = getLandmarks(B);
       const alpha = parseFloat(smoothEl.value);
       const prev = history[history.length-1];
       if(prev && prev.length==2){ lmA = smoothPoints(prev[0], lmA, alpha); lmB = smoothPoints(prev[1], lmB, alpha); }
       history.push([lmA,lmB]); if(history.length>maxHistory) history.shift();
 
-      const avg = getAvgPoints(lmA, lmB);
+      // average for triangulation
+      const avg = avgPoints(lmA, lmB);
       let triangles;
-      try{ triangles = getTrianglesFromLandmarks(avg); }catch(e){ triangles = [[lmA[17], lmA[19], lmA[21]]]; }
+      try { triangles = getTriangles(avg); } catch(e) { triangles = [[lmA[17], lmA[19], lmA[21]]]; }
 
-      // prepare sources
-      const w2 = w, h2 = h;
+      // ---- prepare masked source canvases ----
+      // draw full frame into srcA/srcB (mirrored if needed)
       sA.save(); sB.save();
-      if(mirror.checked){ sA.translate(w2,0); sA.scale(-1,1); sB.translate(w2,0); sB.scale(-1,1); }
-      sA.clearRect(0,0,w2,h2); sB.clearRect(0,0,w2,h2);
-      sA.drawImage(videoEl,0,0,w2,h2); sB.drawImage(videoEl,0,0,w2,h2);
+      if(mirror.checked){ sA.translate(w,0); sA.scale(-1,1); sB.translate(w,0); sB.scale(-1,1); }
+      sA.clearRect(0,0,w,h); sB.clearRect(0,0,w,h);
+      sA.drawImage(video, 0, 0, w, h); sB.drawImage(video, 0, 0, w, h);
       sA.restore(); sB.restore();
 
-      mA.clearRect(0,0,w2,h2); mB.clearRect(0,0,w2,h2);
-      mA.fillStyle='white'; drawMask(mA, lmA);
-      mB.fillStyle='white'; drawMask(mB, lmB);
+      // create face masks in maskA/maskB (white inside face hull)
+      mA.clearRect(0,0,w,h); mB.clearRect(0,0,w,h);
+      mA.fillStyle = 'black'; mA.fillRect(0,0,w,h);
+      mB.fillStyle = 'black'; mB.fillRect(0,0,w,h);
+      mA.fillStyle = 'white'; drawFaceMask(mA, lmA);
+      mB.fillStyle = 'white'; drawFaceMask(mB, lmB);
 
-      comp.clearRect(0,0,w2,h2); comp.drawImage(offVideoCanvas,0,0);
-      const blend = parseFloat(blendEl.value); blendVal.innerText = 'Blend: ' + blend.toFixed(2);
+      // apply masks to src canvases using destination-in so only face hull remains
+      sA.save();
+      sA.globalCompositeOperation = 'destination-in';
+      sA.drawImage(maskA, 0, 0);
+      sA.globalCompositeOperation = 'source-over';
+      sA.restore();
 
+      sB.save();
+      sB.globalCompositeOperation = 'destination-in';
+      sB.drawImage(maskB, 0, 0);
+      sB.globalCompositeOperation = 'source-over';
+      sB.restore();
+
+      // ---- composite: start with background frame ----
+      comp.clearRect(0,0,w,h);
+      comp.drawImage(offVideo, 0, 0);
+
+      const blend = parseFloat(blendEl.value);
+      blendVal.innerText = 'Blend: ' + blend.toFixed(2);
+
+      // warp triangles: A -> B location, B -> A location
       for(const tri of triangles){
+        // find nearest landmark indices (map triangle vertices to landmark indices)
         const idxs = tri.map(pt=>{
-          let bestI=0,bestD=Infinity;
-          for(let i=0;i<avg.length;i++){ const dx=avg[i][0]-pt[0], dy=avg[i][1]-pt[1], d=dx*dx+dy*dy; if(d<bestD){bestD=d;bestI=i;} }
-          return bestI;
+          let best=0, bestD=Infinity;
+          for(let i=0;i<avg.length;i++){ const dx=avg[i][0]-pt[0], dy=avg[i][1]-pt[1], d=dx*dx+dy*dy; if(d<bestD){bestD=d;best=i;} }
+          return best;
         });
+
         const srcTriA = idxs.map(i=>lmA[i]);
         const dstTriB = idxs.map(i=>lmB[i]);
+        const srcTriB = idxs.map(i=>lmB[i]);
+        const dstTriA = idxs.map(i=>lmA[i]);
 
+        // warp masked face A into B's triangle positions
         drawTriangleWarp(sA, comp, srcTriA, dstTriB, blend);
-        drawTriangleWarp(sB, comp, dstTriB, srcTriA, blend);
+        // warp masked face B into A's triangle positions
+        drawTriangleWarp(sB, comp, srcTriB, dstTriA, blend);
       }
 
+      // final draw to visible canvas
       ctx.clearRect(0,0,w,h);
-      ctx.drawImage(composite,0,0);
+      ctx.drawImage(composite, 0, 0);
 
+      // optional: draw landmarks for debug
       if(showLandmarks.checked){
         ctx.fillStyle='rgba(255,0,0,0.9)'; for(const p of lmA){ ctx.beginPath(); ctx.arc(p[0],p[1],2,0,Math.PI*2); ctx.fill(); }
         ctx.fillStyle='rgba(0,255,0,0.9)'; for(const p of lmB){ ctx.beginPath(); ctx.arc(p[0],p[1],2,0,Math.PI*2); ctx.fill(); }
       }
 
-      requestAnimationFrame(processFrame);
+      requestAnimationFrame(process);
     }
 
-    // UI
-    swapBtn.addEventListener('click', ()=>{ swapping=!swapping; swapBtn.innerText = swapping ? 'Swapping (running)' : 'Start swapping'; paused=false; if(swapping) requestAnimationFrame(processFrame); });
-    pauseBtn.addEventListener('click', ()=>{ paused=!paused; pauseBtn.innerText = paused ? 'Resume' : 'Pause'; if(!paused && swapping) requestAnimationFrame(processFrame); });
-    snapBtn.addEventListener('click', ()=>{ const data = videoCanvas.toDataURL('image/png'); const a = document.createElement('a'); a.href=data; a.download='faceswap_snapshot.png'; a.click(); });
-    resSelect.addEventListener('change', ()=>{ setCanvasSizeFromRes(); });
-    retryModels.addEventListener('click', async ()=>{ try{ await loadModelsWithRetries(); status.innerText='Models loaded — ready.'; }catch(e){ console.error(e); } });
+    // UI wiring
+    swapBtn.addEventListener('click', ()=>{ swapping = !swapping; swapBtn.innerText = swapping ? 'Swapping (running)' : 'Start swapping'; paused=false; if(swapping) requestAnimationFrame(process); });
+    pauseBtn.addEventListener('click', ()=>{ paused = !paused; pauseBtn.innerText = paused ? 'Resume' : 'Pause'; if(!paused && swapping) requestAnimationFrame(process); });
+    snapBtn.addEventListener('click', ()=>{ const data = canvas.toDataURL('image/png'); const a = document.createElement('a'); a.href = data; a.download = 'faceswap.png'; a.click(); });
+    resSelect.addEventListener('change', ()=>{ setSize(); });
 
     // init
     (async ()=>{
       try{
-        setCanvasSizeFromRes();
-        await loadModelsWithRetries();
-        await startCamera();
-        status.innerText = 'Ready. Click "Start swapping" to begin.';
-        videoEl.addEventListener('loadeddata', ()=>{ if(!swapping) ctx.drawImage(videoEl,0,0,videoCanvas.width,videoCanvas.height); });
+        setSize();
+        await loadModels();
+        await startCam();
+        status.innerText = 'Ready. Click "Start swapping".';
+        video.addEventListener('loadeddata', ()=>{ if(!swapping) ctx.drawImage(video, 0, 0, canvas.width, canvas.height); });
       }catch(e){
-        console.error('Init failed', e);
+        console.error(e);
+        // leave status text (loadModels/startCam set it)
       }
     })();
 
-    // stop camera on unload
-    window.addEventListener('beforeunload', ()=>{ try{ const s = videoEl.srcObject; if(s) s.getTracks().forEach(t=>t.stop()); }catch(e){} });
+    // cleanup camera on unload
+    window.addEventListener('beforeunload', ()=>{ try{ const s = video.srcObject; if(s) s.getTracks().forEach(t=>t.stop()); }catch(e){} });
+
   })();
   </script>
 </body>
