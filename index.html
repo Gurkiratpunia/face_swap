@@ -3,72 +3,56 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Live Face Swap — MediaPipe FaceMesh (Snapchat-style)</title>
+<title>Face Swap — Simple, Robust (MediaPipe)</title>
 <style>
-  :root{--bg:#07111a;--card:#071722;--accent:#66e4b4;--muted:#9aa6b2}
-  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#071827 0%, #041021 100%);color:#e6eef6}
-  .wrap{max-width:1100px;margin:20px auto;padding:14px;display:grid;grid-template-columns:1fr 320px;gap:18px}
-  .panel{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:14px;box-shadow:0 8px 30px rgba(2,6,23,0.6)}
-  h1{margin:4px 0;font-size:18px}
-  canvas#out{width:100%;border-radius:10px;background:#000}
-  .muted{color:var(--muted);font-size:13px}
-  .row{display:flex;gap:8px;align-items:center}
-  button{background:var(--accent);border:none;padding:8px 12px;border-radius:8px;color:#012;cursor:pointer;font-weight:700}
-  button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.05);color:var(--muted);font-weight:600}
-  label{font-size:13px;color:var(--muted)}
+  body{margin:0;font-family:Inter,system-ui,Arial;background:#071022;color:#e6eef6}
+  .wrap{display:flex;gap:12px;padding:14px;align-items:flex-start}
+  .panel{background:#071827;padding:12px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.6);width:720px}
+  aside{width:300px;background:#061420;padding:12px;border-radius:10px}
+  canvas{width:100%;border-radius:8px;background:#000;display:block}
+  .row{display:flex;gap:8px;margin-top:8px;align-items:center}
+  button{background:#66e4b4;border:none;padding:8px 12px;border-radius:8px;color:#012;cursor:pointer;font-weight:700}
+  button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:#9aa6b2}
+  label{color:#9aa6b2;font-size:13px}
   input[type=range]{width:100%}
-  .pill{background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:8px;color:var(--muted)}
-  small{color:var(--muted)}
+  .muted{color:#9aa6b2;font-size:13px}
 </style>
 </head>
 <body>
   <div class="wrap">
     <div class="panel">
-      <h1>Live Face Swap — MediaPipe FaceMesh</h1>
-      <canvas id="out" width="960" height="540"></canvas>
-      <div class="row" style="margin-top:10px;gap:12px">
+      <h2 style="margin:0 0 8px 0">Face Swap — Simple & Robust</h2>
+      <canvas id="out" width="720" height="540"></canvas>
+      <div class="row">
         <button id="start">Start</button>
         <button id="stop" class="ghost">Stop</button>
         <button id="snap" class="ghost">Snapshot</button>
-        <div style="margin-left:auto" class="pill" id="fps">FPS: --</div>
-        <div class="pill" id="faces">Faces: --</div>
+        <div style="margin-left:auto" class="muted" id="status">Idle</div>
       </div>
-      <div style="margin-top:8px" class="muted">Tip: ensure two faces are visible, good front lighting, and minimal occlusions for best results (glasses/hats sometimes break warps).</div>
+      <div class="muted" style="margin-top:8px">This version swaps whole face regions (ellipse mask) with rotation+scale. Works reliably in more environments.</div>
     </div>
 
-    <aside class="panel">
-      <div>
-        <label>Blend (seam)</label>
-        <input id="blend" type="range" min="0" max="1" step="0.01" value="0.9">
-      </div>
-      <div style="margin-top:8px">
-        <label>Smoothing (landmarks)</label>
-        <input id="smooth" type="range" min="0" max="1" step="0.01" value="0.8">
-      </div>
-      <div style="margin-top:8px">
-        <label>Resolution</label>
-        <select id="res"><option value="960x540">960×540</option><option value="1280x720">1280×720</option><option value="640x480">640×480</option></select>
-        <small class="muted">Lower = faster</small>
-      </div>
-      <div style="margin-top:8px">
-        <label><input type="checkbox" id="mirror"> Mirror (selfie)</label>
-      </div>
-      <div style="margin-top:18px" class="muted">Model: MediaPipe FaceMesh (client-side). No uploads. Works best on modern Chrome/Edge.</div>
+    <aside>
+      <div style="margin-bottom:10px"><label>Blend</label><input id="blend" type="range" min="0" max="1" step="0.01" value="0.95"></div>
+      <div style="margin-bottom:10px"><label>Smoothing</label><input id="smooth" type="range" min="0" max="1" step="0.01" value="0.8"></div>
+      <div style="margin-bottom:10px"><label>Resolution</label><select id="res"><option value="720x540">720×540</option><option value="960x720">960×720</option><option value="640x480">640×480</option></select></div>
+      <div style="margin-bottom:10px"><label><input type="checkbox" id="mirror"> Mirror (selfie)</label></div>
+      <div class="muted" style="margin-top:12px">If it still fails: paste console errors or tell me your browser & OS. I'll debug further.</div>
     </aside>
   </div>
 
-  <!-- MediaPipe FaceMesh + Camera Utils + Delaunator -->
+  <!-- MediaPipe FaceMesh + Camera Utils -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <script src="https://unpkg.com/delaunator@5.0.0/index.min.js"></script>
 
 <script>
 /*
-  Live face swap using MediaPipe FaceMesh.
-  - Single-file implementation
-  - Uses triangulation of average points (Delaunator)
-  - Masks sources so only face hull pixels are used
-  - Per-triangle affine warp with blending
+  Simpler face-swap:
+  - MediaPipe FaceMesh gives landmarks
+  - For top-2 faces: compute ellipse region (hull), compute center/scale/rotation from eyes & face width
+  - Extract each face into offscreen canvas, mask to ellipse (destination-in)
+  - Draw faceA onto faceB transform (rotate/scale) and vice versa with blend alpha
+  - Less fragile than triangulation, more robust in real-world conditions
 */
 
 const out = document.getElementById('out');
@@ -76,274 +60,220 @@ const ctx = out.getContext('2d');
 const startBtn = document.getElementById('start');
 const stopBtn = document.getElementById('stop');
 const snapBtn = document.getElementById('snap');
-const fpsEl = document.getElementById('fps');
-const facesEl = document.getElementById('faces');
+const statusEl = document.getElementById('status');
 const blendRange = document.getElementById('blend');
 const smoothRange = document.getElementById('smooth');
 const resSelect = document.getElementById('res');
 const mirrorCheckbox = document.getElementById('mirror');
 
-let videoEl = document.createElement('video');
-videoEl.style.display = 'none';
-videoEl.autoplay = true; videoEl.playsInline = true; videoEl.muted = true;
-
+let video = document.createElement('video');
+video.autoplay = true; video.playsInline = true; video.muted = true;
 let camera = null;
 let faceMesh = null;
 let running = false;
-let lastTime = performance.now(), frames = 0;
+let fpsCount = 0, fpsTimer = performance.now();
 
-// offscreen canvases
-let vidCanvas = document.createElement('canvas'), vidCtx = vidCanvas.getContext('2d');
-let srcA = document.createElement('canvas'), sA = srcA.getContext('2d');
-let srcB = document.createElement('canvas'), sB = srcB.getContext('2d');
-let maskA = document.createElement('canvas'), mA = maskA.getContext('2d');
-let maskB = document.createElement('canvas'), mB = maskB.getContext('2d');
-let composite = document.createElement('canvas'), comp = composite.getContext('2d');
+// offscreen canvases for extraction/masking
+const vidCanvas = document.createElement('canvas'), vidCtx = vidCanvas.getContext('2d');
+const faceAcanvas = document.createElement('canvas'), faceActx = faceAcanvas.getContext('2d');
+const faceBcanvas = document.createElement('canvas'), faceBctx = faceBcanvas.getContext('2d');
 
-// history smoothing
-const history = []; const maxHistory = 4;
-
-// utility: set sizes according to resolution select
 function setSizes(){
   const [w,h] = resSelect.value.split('x').map(Number);
   out.width = w; out.height = h;
   vidCanvas.width = w; vidCanvas.height = h;
-  [srcA, srcB, maskA, maskB, composite].forEach(c => { c.width = w; c.height = h; });
+  faceAcanvas.width = faceBcanvas.width = w; faceAcanvas.height = faceBcanvas.height = h;
 }
 setSizes();
-resSelect.addEventListener('change', ()=> setSizes());
+resSelect.addEventListener('change', setSizes);
 
-// helper to convert normalized medias to canvas coords
-function normalizedToCanvas(point, w, h){
-  // MediaPipe landmarks: x,y in [0,1], origin top-left; z ignored
-  return [ point.x * w, point.y * h ];
-}
-
-// face hull indices (approximate) — use MediaPipe's face mesh outer contour indexes:
-// We'll use a hull of selected points: jaw/cheek/temple/lips/nose bridge
-// Choose a set of landmark indexes that outline the face. MediaPipe uses 468 points; this selection approximates hull.
-const faceHullIdx = [
-  10, 338, 297, 332, 284, 251, 389, 356,
-  454, 323, 361, 288, 397, 365, 379, 378,
-  400, 377, 152, 148, 176, 149, 150, 136,
-  172, 58, 132, 93, 234, 127, 162, 21,
-  54, 103, 67, 109
-];
-
-// compute landmarks array [ [x,y], ... ] from MediaPipe landmarks
-function landmarksToArray(landmarks, w, h){
-  const arr = [];
-  for(let i=0;i<landmarks.length;i++){
-    const p = landmarks[i];
-    arr.push([p.x * w, p.y * h]);
+// utility: compute bounding ellipse & orientation from landmarks
+function computeFaceParams(landmarks, w, h){
+  // landmarks: array of {x,y,z} normalized 0..1
+  // convert to canvas coords
+  const pts = landmarks.map(p => [p.x * w, p.y * h]);
+  // use left eye average and right eye average for rotation
+  const leftEyeIdxs = [33, 7, 163, 144, 145, 153, 154, 155, 133]; // approximate
+  const rightEyeIdxs = [263, 249, 390, 373, 374, 380, 381, 382, 362];
+  const avg = idxs => {
+    let sx=0, sy=0;
+    idxs.forEach(i => { sx += pts[i][0]; sy += pts[i][1]; });
+    return [sx/idxs.length, sy/idxs.length];
   }
-  return arr;
-}
-
-// smoothing function
-function smooth(prev, cur, alpha){
-  if(!prev) return cur.map(p => [p[0], p[1]]);
-  return cur.map((p,i)=>[ prev[i][0] * (1-alpha) + p[0]*alpha, prev[i][1] * (1-alpha) + p[1]*alpha ]);
-}
-
-// affine solver (3x3)
-function computeAffine(srcTri, dstTri){
-  const A=[]; const Bu=[]; const Bv=[];
-  for(let i=0;i<3;i++){ const [x,y]=srcTri[i]; const [u,v]=dstTri[i]; A.push([x,y,1]); Bu.push(u); Bv.push(v); }
-  function solve3(A,B){
-    const m=A;
-    const a11=m[0][0], a12=m[0][1], a13=m[0][2];
-    const a21=m[1][0], a22=m[1][1], a23=m[1][2];
-    const a31=m[2][0], a32=m[2][1], a33=m[2][2];
-    const det = a11*(a22*a33-a23*a32) - a12*(a21*a33-a23*a31) + a13*(a21*a32-a22*a31);
-    if(Math.abs(det) < 1e-8) return [1,0,0,0,1,0];
-    const det1 = B[0]*(a22*a33-a23*a32) - a12*(B[1]*a33-a23*B[2]) + a13*(B[1]*a32-a22*B[2]);
-    const det2 = a11*(B[1]*a33-a23*B[2]) - B[0]*(a21*a33-a23*a31) + a13*(a21*B[2]-B[1]*a31);
-    const det3 = a11*(a22*B[2]-B[1]*a32) - a12*(a21*B[2]-B[1]*a31) + B[0]*(a21*a32-a22*a31);
-    return [det1/det, det2/det, det3/det];
+  const leftEye = avg(leftEyeIdxs);
+  const rightEye = avg(rightEyeIdxs);
+  const cx = (leftEye[0] + rightEye[0]) / 2;
+  const cy = (leftEye[1] + rightEye[1]) / 2;
+  // face width approx between cheek points
+  const leftCheek = pts[234] || pts[127] || leftEye;
+  const rightCheek = pts[454-1] || pts[356] || rightEye;
+  // fallback to nose points for scale if cheeks missing
+  const dx = rightEye[0] - leftEye[0];
+  const angle = Math.atan2(dx ? 0 : 0, 1) || Math.atan2(rightEye[1]-leftEye[1], rightEye[0]-leftEye[0]);
+  // approximate face radius: max distance from center to hull points times factor
+  let maxD = 0;
+  for(const p of pts){
+    const d = Math.hypot(p[0]-cx, p[1]-cy);
+    if(d > maxD) maxD = d;
   }
-  const [a,c,e] = solve3(A,Bu);
-  const [b,d,f] = solve3(A,Bv);
-  return [a,b,c,d,e,f];
+  const radius = maxD * 1.05;
+  // return center, radius, angle and raw pts for mask
+  return {center:[cx,cy], radius, angle, pts};
 }
 
-function drawTriangleWarp(srcCtx, dstCtx, srcTri, dstTri, blend){
-  dstCtx.save();
-  dstCtx.beginPath();
-  dstCtx.moveTo(dstTri[0][0], dstTri[0][1]);
-  dstCtx.lineTo(dstTri[1][0], dstTri[1][1]);
-  dstCtx.lineTo(dstTri[2][0], dstTri[2][1]);
-  dstCtx.closePath();
-  dstCtx.clip();
-
-  const M = computeAffine(srcTri, dstTri);
-  dstCtx.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]);
-  dstCtx.globalAlpha = blend;
-  dstCtx.drawImage(srcCtx.canvas, 0, 0);
-  dstCtx.globalAlpha = 1;
-  dstCtx.restore();
-  dstCtx.setTransform(1,0,0,1,0,0);
-}
-
-function drawFaceHullMask(ctx, lmArr){
+function ellipseMask(ctx, cx, cy, rx, ry, rotation){
+  ctx.save();
   ctx.beginPath();
-  const first = faceHullIdx[0];
-  ctx.moveTo(lmArr[first][0], lmArr[first][1]);
-  for(let i=1;i<faceHullIdx.length;i++){
-    const idx = faceHullIdx[i];
-    ctx.lineTo(lmArr[idx][0], lmArr[idx][1]);
-  }
+  ctx.translate(cx, cy);
+  ctx.rotate(rotation);
+  ctx.ellipse(0,0,rx,ry,0,0,Math.PI*2);
   ctx.closePath();
+  ctx.restore();
   ctx.fill();
 }
 
-// triangulation helper using Delaunator on avg points
-function triangulateAvg(avgPoints){
-  const coords = [];
-  for(const p of avgPoints) { coords.push(p[0]); coords.push(p[1]); }
-  const dela = new Delaunator(coords);
-  const triangles = [];
-  for(let i=0;i<dela.triangles.length;i+=3){
-    const ia = dela.triangles[i], ib = dela.triangles[i+1], ic = dela.triangles[i+2];
-    triangles.push([avgPoints[ia], avgPoints[ib], avgPoints[ic]]);
+// Helper: create extracted face image on canvas masked to ellipse
+function extractFaceToCanvas(srcCanvas, targetCtx, params, mirror=false){
+  const w = srcCanvas.width, h = srcCanvas.height;
+  targetCtx.clearRect(0,0,w,h);
+  // draw full frame into target (we'll mask it)
+  targetCtx.save();
+  if(mirror){
+    targetCtx.translate(w,0); targetCtx.scale(-1,1);
+    targetCtx.drawImage(srcCanvas, 0, 0, w, h);
+    targetCtx.setTransform(1,0,0,1,0,0);
+  } else {
+    targetCtx.drawImage(srcCanvas, 0, 0, w, h);
   }
-  return triangles;
+  // mask to ellipse using destination-in
+  targetCtx.globalCompositeOperation = 'destination-in';
+  targetCtx.fillStyle = 'black';
+  targetCtx.fillRect(0,0,w,h);
+  targetCtx.fillStyle = 'white';
+  targetCtx.save();
+  targetCtx.translate(0,0);
+  targetCtx.beginPath();
+  // ellipse dims from params
+  const cx = params.center[0], cy = params.center[1];
+  const r = params.radius;
+  // choose rx,ry
+  const rx = r*0.9, ry = r*1.05;
+  targetCtx.translate(cx, cy);
+  targetCtx.rotate(params.angle);
+  targetCtx.ellipse(0,0, rx, ry, 0, 0, Math.PI*2);
+  targetCtx.closePath();
+  targetCtx.fill();
+  targetCtx.restore();
+  targetCtx.globalCompositeOperation = 'source-over';
 }
 
-// main onResults callback from MediaPipe
-let lastTimestamp = performance.now();
+// draw extracted face onto destination center with rotation & scale
+function drawExtractedFace(destCtx, faceCanvas, srcParams, dstParams, alpha=1.0){
+  const w = faceCanvas.width, h = faceCanvas.height;
+  // compute scale ratio: dst radius / src radius
+  const scale = (dstParams.radius / srcParams.radius) || 1.0;
+  // compute rotation difference: dstAngle - srcAngle
+  const rot = dstParams.angle - srcParams.angle;
+  destCtx.save();
+  destCtx.globalAlpha = alpha;
+  // move to destination center
+  destCtx.translate(dstParams.center[0], dstParams.center[1]);
+  destCtx.rotate(rot);
+  destCtx.scale(scale, scale);
+  // draw the faceCanvas centered at src center offset
+  // we need to translate so that srcParams.center maps to (0,0) after scale/rotate
+  const sx = srcParams.center[0], sy = srcParams.center[1];
+  destCtx.drawImage(faceCanvas, -sx, -sy);
+  destCtx.restore();
+  destCtx.globalAlpha = 1.0;
+}
+
+// actual processing with MediaPipe results (raw landmarks)
+let lastSmoothed = null;
 async function onResults(results){
   if(!running) return;
   const w = out.width, h = out.height;
 
-  // draw current frame to vidCanvas (mirror optional)
+  // draw incoming image to vidCanvas (apply mirror if needed)
   vidCtx.save();
   if(mirrorCheckbox.checked) { vidCtx.translate(w,0); vidCtx.scale(-1,1); }
   if(results.image) vidCtx.drawImage(results.image, 0, 0, w, h);
   vidCtx.restore();
 
-  // frames / FPS
-  frames++; const now = performance.now(); if(now - lastTimestamp >= 1000){ fpsEl.innerText = 'FPS: ' + frames; frames = 0; lastTimestamp = now; }
+  // compute FPS
+  fpsCount++;
+  const tNow = performance.now();
+  if(tNow - fpsTimer >= 1000){ statusEl.innerText = 'FPS: ' + fpsCount; fpsCount = 0; fpsTimer = tNow; }
 
   const multi = results.multiFaceLandmarks || [];
-  facesEl.innerText = 'Faces: ' + multi.length;
   if(multi.length < 2){
-    // just show camera feed
+    // just show camera feed when <2 faces
     ctx.clearRect(0,0,w,h);
     ctx.drawImage(vidCanvas, 0, 0);
+    statusEl.innerText = 'Need two faces — faces found: ' + multi.length;
     return;
   }
 
-  // take first two faces (largest by bounding box area if available)
-  // MediaPipe returns faces in detection order; we can pick two largest areas
-  const facesWithArea = multi.map((lm, i) => {
-    let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
-    for(const p of lm){ minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
-    const area = (maxX-minX)*(maxY-minY);
-    return {lm, area, idx: i};
-  });
-  facesWithArea.sort((a,b)=>b.area - a.area);
-  const lmAraw = facesWithArea[0].lm;
-  const lmBraw = facesWithArea[1].lm;
+  // pick largest two faces by bounding box
+  const faces = multi.map((lm, idx)=>{
+    let minX=1e9, minY=1e9, maxX=-1e9, maxY=-1e9;
+    for(const p of lm){ minX=Math.min(minX,p.x); minY=Math.min(minY,p.y); maxX=Math.max(maxX,p.x); maxY=Math.max(maxY,p.y); }
+    return {lm, idx, area:(maxX-minX)*(maxY-minY)};
+  }).sort((a,b)=>b.area - a.area);
 
-  // convert to [x,y] arrays scaled to canvas
-  let lmA = landmarksToArray(lmAraw, w, h);
-  let lmB = landmarksToArray(lmBraw, w, h);
+  const face1 = faces[0].lm, face2 = faces[1].lm;
+
+  // compute params (smoothed)
+  const p1 = computeFaceParams(face1, w, h);
+  const p2 = computeFaceParams(face2, w, h);
 
   // smoothing
   const alpha = parseFloat(smoothRange.value);
-  const prev = history[history.length-1];
-  if(prev && prev.length == 2){
-    lmA = smooth(prev[0], lmA, alpha);
-    lmB = smooth(prev[1], lmB, alpha);
-  }
-  history.push([lmA, lmB]);
-  if(history.length > maxHistory) history.shift();
+  if(!lastSmoothed) lastSmoothed = {p1, p2};
+  const smoothParam = (prev, curr) => {
+    return {
+      center: [ prev.center[0]*(1-alpha) + curr.center[0]*alpha, prev.center[1]*(1-alpha) + curr.center[1]*alpha ],
+      radius: prev.radius*(1-alpha) + curr.radius*alpha,
+      angle: prev.angle*(1-alpha) + curr.angle*alpha,
+      pts: curr.pts
+    };
+  };
+  const sp1 = smoothParam(lastSmoothed.p1, p1);
+  const sp2 = smoothParam(lastSmoothed.p2, p2);
+  lastSmoothed = {p1:sp1, p2:sp2};
 
-  // average points for triangulation (keep indexes consistent)
-  const avg = lmA.map((p,i)=>[ (p[0]+lmB[i][0])/2, (p[1]+lmB[i][1])/2 ]);
+  // extract face images (masked)
+  extractFaceToCanvas(vidCanvas, faceActx, sp1, mirrorCheckbox.checked);
+  extractFaceToCanvas(vidCanvas, faceBctx, sp2, mirrorCheckbox.checked);
 
-  // triangulate
-  let triangles;
-  try { triangles = triangulateAvg(avg); } catch(e) { triangles = []; }
+  // composite: start from original frame
+  ctx.clearRect(0,0,w,h);
+  ctx.drawImage(vidCanvas, 0, 0);
 
-  // prepare masked source canvases: copy vidCanvas into srcA/srcB and mask by hull
-  // draw full frame into src canvases (mirror already applied to vidCanvas)
-  sA.save(); sB.save();
-  sA.clearRect(0,0,w,h); sB.clearRect(0,0,w,h);
-  sA.drawImage(vidCanvas, 0, 0, w, h); sB.drawImage(vidCanvas, 0, 0, w, h);
-  sA.restore(); sB.restore();
-
-  // build masks
-  mA.clearRect(0,0,w,h); mB.clearRect(0,0,w,h);
-  mA.fillStyle = 'black'; mA.fillRect(0,0,w,h);
-  mB.fillStyle = 'black'; mB.fillRect(0,0,w,h);
-  mA.fillStyle = 'white'; drawFaceHullMask(mA, lmA);
-  mB.fillStyle = 'white'; drawFaceHullMask(mB, lmB);
-
-  // apply masks using destination-in to keep only face hull pixels
-  sA.save(); sA.globalCompositeOperation = 'destination-in'; sA.drawImage(maskA, 0, 0); sA.globalCompositeOperation = 'source-over'; sA.restore();
-  sB.save(); sB.globalCompositeOperation = 'destination-in'; sB.drawImage(maskB, 0, 0); sB.globalCompositeOperation = 'source-over'; sB.restore();
-
-  // composite start with background (original frame)
-  comp.clearRect(0,0,w,h);
-  comp.drawImage(vidCanvas, 0, 0);
-
+  // draw faceA onto faceB and faceB onto faceA with blending
   const blend = parseFloat(blendRange.value);
 
-  // warp triangles
-  for(const tri of triangles){
-    // map tri vertex to closest landmark index (to preserve correspondence)
-    const idxs = tri.map(pt=>{
-      let best=0, bestD=Infinity;
-      for(let i=0;i<avg.length;i++){
-        const dx = avg[i][0]-pt[0], dy = avg[i][1]-pt[1], d = dx*dx + dy*dy;
-        if(d < bestD){ bestD = d; best = i; }
-      }
-      return best;
-    });
+  // draw faceA -> p2
+  drawExtractedFace(ctx, faceAcanvas, sp1, sp2, blend);
+  // draw faceB -> p1
+  drawExtractedFace(ctx, faceBcanvas, sp2, sp1, blend);
 
-    const srcTriA = idxs.map(i => lmA[i]);
-    const dstTriB = idxs.map(i => lmB[i]);
-    const srcTriB = idxs.map(i => lmB[i]);
-    const dstTriA = idxs.map(i => lmA[i]);
-
-    // A->B
-    drawTriangleWarp(sA, comp, srcTriA, dstTriB, blend);
-    // B->A
-    drawTriangleWarp(sB, comp, srcTriB, dstTriA, blend);
-  }
-
-  // draw composite to visible canvas
-  ctx.clearRect(0,0,w,h);
-  ctx.drawImage(composite, 0, 0);
-
-  // finished
+  statusEl.innerText = 'Swapping — faces found: ' + multi.length;
 }
 
-// Initialize MediaPipe FaceMesh with camera
-async function initFaceMesh(){
-  faceMesh = new FaceMesh({
-    locateFile: (file) => {
-      // Load wasm / assets from CDN
-      return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
-    }
-  });
-
+// initialize faceMesh and camera
+async function init(){
+  faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
   faceMesh.setOptions({
     maxNumFaces: 2,
     refineLandmarks: true,
     minDetectionConfidence: 0.5,
     minTrackingConfidence: 0.5
   });
-
   faceMesh.onResults(onResults);
 
-  // camera utils will call faceMesh.send({image: videoEl})
-  camera = new Camera(videoEl, {
-    onFrame: async () => {
-      await faceMesh.send({image: videoEl});
-    },
+  camera = new Camera(video, {
+    onFrame: async () => { await faceMesh.send({image: video}); },
     width: out.width,
     height: out.height
   });
@@ -351,17 +281,17 @@ async function initFaceMesh(){
 
 startBtn.addEventListener('click', async ()=>{
   if(running) return;
-  setSizes();
-  // start camera permission & faceMesh
   try{
-    if(!faceMesh) await initFaceMesh();
+    setSizes();
+    if(!faceMesh) await init();
     await camera.start();
     running = true;
     startBtn.disabled = true;
     stopBtn.disabled = false;
-  }catch(e){
-    alert('Camera / model start failed: ' + (e && e.message ? e.message : e));
-    console.error(e);
+    statusEl.innerText = 'Started — allow camera';
+  }catch(err){
+    console.error(err);
+    alert('Could not start camera/face model: ' + (err && err.message ? err.message : err));
   }
 });
 
@@ -371,19 +301,18 @@ stopBtn.addEventListener('click', ()=>{
   running = false;
   startBtn.disabled = false;
   stopBtn.disabled = true;
+  statusEl.innerText = 'Stopped';
 });
 
-// snapshot
 snapBtn.addEventListener('click', ()=>{
-  const data = out.toDataURL('image/png');
-  const a = document.createElement('a'); a.href=data; a.download='faceswap_snapshot.png'; a.click();
+  const url = out.toDataURL('image/png');
+  const a = document.createElement('a');
+  a.href = url; a.download = 'faceswap_snap.png'; a.click();
 });
 
-// init (disable Stop until started)
+// disable stop initially
 stopBtn.disabled = true;
 
-// quick note: ensure user interaction to start camera in some browsers
-// End of script
 </script>
 </body>
 </html>
